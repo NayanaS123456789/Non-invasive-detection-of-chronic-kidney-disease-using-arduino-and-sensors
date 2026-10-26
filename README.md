@@ -106,14 +106,17 @@ Arduino UNO → Measurement processing → LCD display
 | Mouthpiece and tubing | Directs the breath sample into the collection setup |
 | One-way valve | Helps control the direction of airflow |
 | Connecting wires and supporting circuitry | Provide electrical connections between system components |
-<img width="810" height="568" alt="image" src="https://github.com/user-attachments/assets/cb7b69df-0936-4465-b091-60d4e673d1f2" />
+<img width="810" height="568" alt="image" src="https://github.com/user-attachments/assets/2c4205d1-0864-4f56-a2bd-a24d0bed411f" />
+
 
 ## Working Principle
 
 ### 1. Breath Ammonia Measurement Using MQ137
 
 The MQ137 is a gas sensor sensitive to ammonia (NH₃). Its electrical characteristics change in response to the concentration of ammonia in the surrounding gas.
-<img width="678" height="411" alt="image" src="https://github.com/user-attachments/assets/338de51e-164a-4ed4-8079-b531e3b78489" />
+
+<img width="678" height="411" alt="image" src="https://github.com/user-attachments/assets/87907c6f-c7d8-4519-9b25-0b22603ead36" />
+
 
 **Working steps:**
 
@@ -131,9 +134,10 @@ The project report discusses a breath ammonia range of approximately 0.3–1.2 p
 The optical subsystem investigates estimating hemoglobin concentration by measuring light transmitted through a finger.
 
 Hemoglobin absorbs light differently at different wavelengths. The project uses red and infrared illumination to investigate the relationship between transmitted light and hemoglobin-related optical properties.
-<img width="690" height="431" alt="image" src="https://github.com/user-attachments/assets/63f41adf-1be0-4beb-bb92-5acab549f1c5" />
-<img width="726" height="466" alt="image" src="https://github.com/user-attachments/assets/99149d28-e537-4dc3-bd2e-42ddc0d31032" />
-<img width="700" height="502" alt="image" src="https://github.com/user-attachments/assets/dbb09bdc-c0cd-4fd7-8b91-73a5659de472" />
+<img width="690" height="431" alt="image" src="https://github.com/user-attachments/assets/a1564210-d658-43ef-98f1-378f381751cd" />
+<img width="726" height="466" alt="image" src="https://github.com/user-attachments/assets/01f5f9ed-4d5b-4307-ae12-1247c3b7013c" />
+<img width="700" height="502" alt="image" src="https://github.com/user-attachments/assets/81183931-3b6e-453a-9d0a-ebd7d4ef8f04" />
+
 
 **Working steps:**
 
