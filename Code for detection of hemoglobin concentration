@@ -1,0 +1,213 @@
+
+#include <Wire.h>
+#include <math.h>
+#include <LiquidCrystal.h>
+
+#define led_pin1 2
+#define led_pin2 3
+#define SAMPLES 100
+#define CYCLES 10
+
+const int rs = 8, en = 9, d4 = 10, d5 = 11, d6 = 12, d7 = 13;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+const int voltage_A2 = A2;
+
+float voltage1[SAMPLES];
+float voltage2[SAMPLES];
+
+float meanPeak1, meanPeak2;
+float meanValley1, meanValley2;
+float AC1, AC2;
+float DC1, DC2;
+
+float ratio1, ratio2;
+float Hb, HbO2, totalHemoglobin;
+float maxTotalHemoglobin = 0.0;
+
+const float extinctionCoefficients[2][2] = {
+    {1.0, 0.8},  // Coefficients for 670 nm
+    {1.4, 1.0}   // Coefficients for 950 nm
+};
+
+void findMeanPeakAndValley(
+    float *voltages,
+    int size,
+    float &meanPeak,
+    float &meanValley
+);
+
+void setup() {
+    pinMode(led_pin1, OUTPUT);
+    pinMode(led_pin2, OUTPUT);
+    pinMode(voltage_A2, INPUT);
+
+    Serial.begin(9600);
+
+    lcd.begin(16, 2);
+    lcd.print("Hb in g/L");
+    lcd.setCursor(0, 1);
+    lcd.print("-CircuitDigest");
+
+    delay(2000);
+    lcd.clear();
+}
+
+void loop() {
+    // Read sensor with LED 1 ON
+    digitalWrite(led_pin1, HIGH);
+    delay(200);
+
+    for (int i = 0; i < SAMPLES; i++) {
+        voltage1[i] = analogRead(voltage_A2) * (5.0 / 1023.0);
+        delay(10);
+    }
+
+    digitalWrite(led_pin1, LOW);
+
+    findMeanPeakAndValley(
+        voltage1, SAMPLES, meanPeak1, meanValley1
+    );
+
+    AC1 = meanPeak1 - meanValley1;
+    DC1 = meanValley1;
+
+    if (AC1 <= 0 || DC1 <= 0) {
+        Serial.println("Invalid LED 1 signal");
+        lcd.clear();
+        lcd.print("Check LED 1");
+        delay(2000);
+        return;
+    }
+
+    ratio1 = log(AC1 / DC1);
+
+    Serial.print("LED1 Peak: ");
+    Serial.print(meanPeak1);
+    Serial.print(" Valley: ");
+    Serial.print(meanValley1);
+    Serial.print(" AC: ");
+    Serial.print(AC1);
+    Serial.print(" DC: ");
+    Serial.print(DC1);
+    Serial.print(" Ratio: ");
+    Serial.println(ratio1);
+
+    // Read sensor with LED 2 ON
+    digitalWrite(led_pin2, HIGH);
+    delay(200);
+
+    for (int i = 0; i < SAMPLES; i++) {
+        voltage2[i] = analogRead(voltage_A2) * (5.0 / 1023.0);
+        delay(10);
+    }
+
+    digitalWrite(led_pin2, LOW);
+
+    findMeanPeakAndValley(
+        voltage2, SAMPLES, meanPeak2, meanValley2
+    );
+
+    AC2 = meanPeak2 - meanValley2;
+    DC2 = meanValley2;
+
+    if (AC2 <= 0 || DC2 <= 0) {
+        Serial.println("Invalid LED 2 signal");
+        lcd.clear();
+        lcd.print("Check LED 2");
+        delay(2000);
+        return;
+    }
+
+    ratio2 = log(AC2 / DC2);
+
+    Serial.print("LED2 Peak: ");
+    Serial.print(meanPeak2);
+    Serial.print(" Valley: ");
+    Serial.print(meanValley2);
+    Serial.print(" AC: ");
+    Serial.print(AC2);
+    Serial.print(" DC: ");
+    Serial.print(DC2);
+    Serial.print(" Ratio: ");
+    Serial.println(ratio2);
+
+    // Calculate hemoglobin values
+    float determinant =
+        extinctionCoefficients[0][0] * extinctionCoefficients[1][1] -
+        extinctionCoefficients[0][1] * extinctionCoefficients[1][0];
+
+    if (fabs(determinant) < 0.000001) {
+        Serial.println("Invalid extinction coefficients");
+        return;
+    }
+
+    Hb = (ratio1 * extinctionCoefficients[1][1] -
+          ratio2 * extinctionCoefficients[0][1]) / determinant;
+
+    HbO2 = (ratio2 * extinctionCoefficients[0][0] -
+            ratio1 * extinctionCoefficients[1][0]) / determinant;
+
+    totalHemoglobin = Hb + HbO2;
+
+    if (totalHemoglobin > maxTotalHemoglobin) {
+        maxTotalHemoglobin = totalHemoglobin;
+    }
+
+    Serial.print("Hb: ");
+    Serial.println(Hb);
+
+    Serial.print("HbO2: ");
+    Serial.println(HbO2);
+
+    Serial.print("Total Hemoglobin: ");
+    Serial.println(totalHemoglobin);
+
+    Serial.print("Max Total Hemoglobin: ");
+    Serial.println(maxTotalHemoglobin);
+
+    // Display result on LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Total Hb: ");
+    lcd.print(totalHemoglobin, 2);
+
+    lcd.setCursor(0, 1);
+    lcd.print("HbO2: ");
+    lcd.print(HbO2, 2);
+
+    delay(2000);
+}
+
+void findMeanPeakAndValley(
+    float *voltages,
+    int size,
+    float &meanPeak,
+    float &meanValley
+) {
+    float peakSum = 0;
+    float valleySum = 0;
+
+    int peakCount = 0;
+    int valleyCount = 0;
+
+    for (int i = 1; i < size - 1; i++) {
+        if (voltages[i] > voltages[i - 1] &&
+            voltages[i] > voltages[i + 1]) {
+            peakSum += voltages[i];
+            peakCount++;
+        }
+
+        if (voltages[i] < voltages[i - 1] &&
+            voltages[i] < voltages[i + 1]) {
+            valleySum += voltages[i];
+            valleyCount++;
+        }
+    }
+
+    meanPeak = (peakCount > 0) ?
+               peakSum / peakCount : 0;
+
+    meanValley = (valleyCount > 0) ?
+                 valleySum / valleyCount : 0;
+}

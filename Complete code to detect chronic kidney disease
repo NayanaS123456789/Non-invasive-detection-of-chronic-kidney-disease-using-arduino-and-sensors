@@ -1,0 +1,347 @@
+
+#include <Wire.h>
+#include <math.h>
+#include <LiquidCrystal.h>
+
+// Pin definitions
+#define led_pin1 2
+#define led_pin2 3
+#define SAMPLES 100
+#define CYCLES 3
+
+// MQ sensor calibration parameters
+#define RL 47.0
+#define MQ_SLOPE -0.263
+#define MQ_INTERCEPT 0.42
+#define RO 35.0
+#define MQ_SENSOR A0
+#define NH3_SAMPLES 10
+
+// LCD pins
+const int rs = 8, en = 9, d4 = 10, d5 = 11, d6 = 12, d7 = 13;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+// Hemoglobin sensor
+const int voltage_A2 = A2;
+
+float voltage1[SAMPLES];
+float voltage2[SAMPLES];
+
+float meanPeak1, meanPeak2;
+float meanValley1, meanValley2;
+float AC1, AC2, DC1, DC2;
+float ratio1, ratio2;
+
+float Hb, HbO2, totalHemoglobin;
+float totalHemoglobinSum = 0.0;
+float totalHemoglobinArray[CYCLES];
+float meanTotalHemoglobin = 0.0;
+
+char gender = ' ';
+
+// Extinction coefficient matrix
+const float extinctionCoefficients[2][2] = {
+    {1.0, 0.8},
+    {1.4, 1.0}
+};
+
+// Ammonia sensor
+float ppmValues[NH3_SAMPLES];
+float meanppm = 0.0;
+
+bool hbCalculated = false;
+bool ppmCalculated = false;
+
+// Function declarations
+void calculateHemoglobin();
+void calculateNH3();
+void findMeanPeakAndValley(
+    float *voltages,
+    int size,
+    float &meanPeak,
+    float &meanValley
+);
+float findMeanppm(float *values, int numValues);
+
+void setup() {
+    pinMode(led_pin1, OUTPUT);
+    pinMode(led_pin2, OUTPUT);
+    pinMode(voltage_A2, INPUT);
+    pinMode(MQ_SENSOR, INPUT);
+
+    digitalWrite(led_pin1, LOW);
+    digitalWrite(led_pin2, LOW);
+
+    Serial.begin(9600);
+
+    lcd.begin(16, 2);
+    lcd.print("Hb and NH3");
+    lcd.setCursor(0, 1);
+    lcd.print("Enter m or f");
+
+    Serial.println("Enter gender: m or f");
+
+    while (Serial.available() == 0) {
+        // Wait for gender input
+    }
+
+    gender = Serial.read();
+
+    if (gender >= 'A' && gender <= 'Z') {
+        gender = gender + ('a' - 'A');
+    }
+
+    while (Serial.available() > 0) {
+        Serial.read();
+    }
+
+    if (gender != 'm' && gender != 'f') {
+        gender = ' ';
+        Serial.println("Invalid input. Enter m or f and reset.");
+        lcd.clear();
+        lcd.print("Invalid gender");
+        while (true) {
+            delay(1000);
+        }
+    }
+
+    delay(1500);
+    lcd.clear();
+}
+
+void loop() {
+    if (!hbCalculated) {
+        calculateHemoglobin();
+        hbCalculated = true;
+    } else if (!ppmCalculated) {
+        calculateNH3();
+        ppmCalculated = true;
+    } else {
+        delay(1000);
+    }
+}
+
+float findMeanppm(float *values, int numValues) {
+    float sum = 0.0;
+
+    for (int i = 0; i < numValues; i++) {
+        sum += values[i];
+    }
+
+    return sum / numValues;
+}
+
+void calculateHemoglobin() {
+    totalHemoglobinSum = 0.0;
+
+    float determinant =
+        extinctionCoefficients[0][0] * extinctionCoefficients[1][1] -
+        extinctionCoefficients[0][1] * extinctionCoefficients[1][0];
+
+    if (fabs(determinant) < 0.000001) {
+        Serial.println("Invalid coefficient matrix");
+        return;
+    }
+
+    for (int cycle = 0; cycle < CYCLES; cycle++) {
+        // LED 1 measurement
+        digitalWrite(led_pin1, HIGH);
+        delay(200);
+
+        for (int i = 0; i < SAMPLES; i++) {
+            voltage1[i] = analogRead(voltage_A2) * (5.0 / 1023.0);
+            delay(10);
+        }
+
+        digitalWrite(led_pin1, LOW);
+        delay(200);
+
+        findMeanPeakAndValley(
+            voltage1, SAMPLES, meanPeak1, meanValley1
+        );
+
+        AC1 = meanPeak1 - meanValley1;
+        DC1 = meanValley1;
+
+        if (AC1 <= 0.0 || DC1 <= 0.0) {
+            Serial.println("Invalid LED 1 signal");
+            lcd.clear();
+            lcd.print("Check LED 1");
+            delay(2000);
+            return;
+        }
+
+        ratio1 = log(AC1 / DC1);
+
+        // LED 2 measurement
+        digitalWrite(led_pin2, HIGH);
+        delay(200);
+
+        for (int i = 0; i < SAMPLES; i++) {
+            voltage2[i] = analogRead(voltage_A2) * (5.0 / 1023.0);
+            delay(10);
+        }
+
+        digitalWrite(led_pin2, LOW);
+        delay(200);
+
+        findMeanPeakAndValley(
+            voltage2, SAMPLES, meanPeak2, meanValley2
+        );
+
+        AC2 = meanPeak2 - meanValley2;
+        DC2 = meanValley2;
+
+        if (AC2 <= 0.0 || DC2 <= 0.0) {
+            Serial.println("Invalid LED 2 signal");
+            lcd.clear();
+            lcd.print("Check LED 2");
+            delay(2000);
+            return;
+        }
+
+        ratio2 = log(AC2 / DC2);
+
+        // Inverse of the extinction coefficient matrix
+        float inv00 = extinctionCoefficients[1][1] / determinant;
+        float inv01 = -extinctionCoefficients[0][1] / determinant;
+        float inv10 = -extinctionCoefficients[1][0] / determinant;
+        float inv11 = extinctionCoefficients[0][0] / determinant;
+
+        Hb = ratio1 * inv00 + ratio2 * inv01;
+        HbO2 = ratio1 * inv10 + ratio2 * inv11;
+
+        totalHemoglobin = fabs(Hb + HbO2);
+
+        totalHemoglobinArray[cycle] = totalHemoglobin;
+        totalHemoglobinSum += totalHemoglobin;
+
+        Serial.print("Cycle ");
+        Serial.println(cycle + 1);
+
+        Serial.print("LED1 ratio: ");
+        Serial.println(ratio1, 4);
+
+        Serial.print("LED2 ratio: ");
+        Serial.println(ratio2, 4);
+
+        Serial.print("Hb estimate: ");
+        Serial.println(Hb, 4);
+
+        Serial.print("HbO2 estimate: ");
+        Serial.println(HbO2, 4);
+
+        Serial.print("Total estimate: ");
+        Serial.println(totalHemoglobin, 4);
+    }
+
+    meanTotalHemoglobin = totalHemoglobinSum / CYCLES;
+
+    Serial.print("Mean Hb estimate: ");
+    Serial.println(meanTotalHemoglobin, 2);
+
+    // Prototype display only; not a clinical diagnosis
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Hb est: ");
+    lcd.print(meanTotalHemoglobin, 2);
+
+    lcd.setCursor(0, 1);
+    lcd.print("Calibrate first");
+
+    delay(4000);
+    lcd.clear();
+}
+
+void calculateNH3() {
+    for (int i = 0; i < NH3_SAMPLES; i++) {
+        float VRL = analogRead(MQ_SENSOR) * (5.0 / 1023.0);
+
+        if (VRL <= 0.0) {
+            Serial.println("Invalid MQ sensor voltage");
+            lcd.clear();
+            lcd.print("Check MQ sensor");
+            delay(2000);
+            return;
+        }
+
+        float Rs = ((5.0 * RL) / VRL) - RL;
+        float ratio = Rs / RO;
+
+        if (ratio <= 0.0) {
+            Serial.println("Invalid MQ resistance ratio");
+            lcd.clear();
+            lcd.print("Check MQ sensor");
+            delay(2000);
+            return;
+        }
+
+        ppmValues[i] = pow(
+            10.0,
+            (log10(ratio) - MQ_INTERCEPT) / MQ_SLOPE
+        );
+
+        delay(100);
+    }
+
+    meanppm = findMeanppm(ppmValues, NH3_SAMPLES);
+
+    Serial.print("Estimated NH3: ");
+    Serial.println(meanppm, 3);
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("NH3 est: ");
+    lcd.print(meanppm, 2);
+
+    lcd.setCursor(0, 1);
+    lcd.print("Prototype only");
+
+    delay(4000);
+
+    // Do not diagnose CKD or assign a CKD stage
+    // using these unvalidated sensor thresholds.
+    Serial.println(
+        "Screening estimate only; not a CKD diagnosis."
+    );
+
+    lcd.clear();
+    lcd.print("Not diagnostic");
+    delay(3000);
+    lcd.clear();
+}
+
+void findMeanPeakAndValley(
+    float *voltages,
+    int size,
+    float &meanPeak,
+    float &meanValley
+) {
+    float peakSum = 0.0;
+    float valleySum = 0.0;
+
+    int peakCount = 0;
+    int valleyCount = 0;
+
+    for (int i = 1; i < size - 1; i++) {
+        if (voltages[i] > voltages[i - 1] &&
+            voltages[i] > voltages[i + 1]) {
+            peakSum += voltages[i];
+            peakCount++;
+        }
+
+        if (voltages[i] < voltages[i - 1] &&
+            voltages[i] < voltages[i + 1]) {
+            valleySum += voltages[i];
+            valleyCount++;
+        }
+    }
+
+    meanPeak = (peakCount > 0)
+        ? peakSum / peakCount
+        : 0.0;
+
+    meanValley = (valleyCount > 0)
+        ? valleySum / valleyCount
+        : 0.0;
+}
